@@ -1,133 +1,89 @@
 import pygame
 from pygame.locals import *
 from OpenGL.GL import *
-import numpy as np
-from emitter import ParticleEmitter
-from camera import OrbitCamera
-from scene import draw_ground  # ta wersja co wyżej, bez glut
+from OpenGL.GLU import *
+import random
+from PIL import Image
+from Raindrop import Raindrop
 
-def load_shader(shader_type, source):
-    shader = glCreateShader(shader_type)
-    glShaderSource(shader, source)
-    glCompileShader(shader)
-    if glGetShaderiv(shader, GL_COMPILE_STATUS) != GL_TRUE:
-        raise RuntimeError(glGetShaderInfoLog(shader))
-    return shader
 
-def create_program(vertex_path, fragment_path):
-    with open(vertex_path, 'r') as f:
-        vertex_src = f.read()
-    with open(fragment_path, 'r') as f:
-        fragment_src = f.read()
-    program = glCreateProgram()
-    vertex_shader = load_shader(GL_VERTEX_SHADER, vertex_src)
-    fragment_shader = load_shader(GL_FRAGMENT_SHADER, fragment_src)
-    glAttachShader(program, vertex_shader)
-    glAttachShader(program, fragment_shader)
-    glLinkProgram(program)
-    if glGetProgramiv(program, GL_LINK_STATUS) != GL_TRUE:
-        raise RuntimeError(glGetProgramInfoLog(program))
-    return program
-
-def load_texture(path):
-    from PIL import Image
-    img = Image.open(path).convert('RGBA')
-    img_data = img.tobytes()
-    width, height = img.size
-    tex_id = glGenTextures(1)
-    glBindTexture(GL_TEXTURE_2D, tex_id)
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, img_data)
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR)
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR)
-    return tex_id
-
-def main():
-    # --- Inicjalizacja ---
+def init_pygame_opengl():
     pygame.init()
-    width, height = 1000, 700
-    pygame.display.set_mode((width, height), DOUBLEBUF | OPENGL)
-    pygame.display.set_caption("System cząstek - point sprite rain (PyOpenGL)")
-    glEnable(GL_DEPTH_TEST)
-    glEnable(GL_PROGRAM_POINT_SIZE)
-    glEnable(GL_BLEND)
+    display = (800, 600)
+    pygame.display.set_mode(display, DOUBLEBUF | OPENGL)
+    gluPerspective(45, (display[0] / display[1]), 0.1, 100.0)
+    glTranslatef(0.0, 0.0, -20)
+
+    # OpenGL: konfiguracja renderingu
+    glEnable(GL_DEPTH_TEST)  # Głębia
+    glEnable(GL_BLEND)  # Przezroczystość
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
 
-    # --- Tworzenie obiektów ---
-    emitter = ParticleEmitter(num_particles=1200)
-    camera = OrbitCamera()
+    glEnable(GL_TEXTURE_2D)  # Włączenie tekstur
+    glEnable(GL_POINT_SPRITE)  # Włączenie point sprite
+    glTexEnvi(GL_POINT_SPRITE, GL_COORD_REPLACE, GL_TRUE)  # Tekstura ma działać per punkt
 
-    program = create_program("shaders/vertex_shader.glsl", "shaders/fragment_shader.glsl")
-    sprite_tex = load_texture("textures/raindrop.png")
+    glEnable(GL_PROGRAM_POINT_SIZE)  # Pozwól ustawić rozmiar punktu z kodu
+    glPointSize(32)  # Rozmiar punktu (sprite'a)
 
-    vao = glGenVertexArrays(1)
-    vbo = glGenBuffers(1)
-    glBindVertexArray(vao)
-    positions = emitter.get_positions()
-    glBindBuffer(GL_ARRAY_BUFFER, vbo)
-    glBufferData(GL_ARRAY_BUFFER, positions.nbytes, positions, GL_DYNAMIC_DRAW)
-    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 0, None)
-    glEnableVertexAttribArray(0)
-    glBindBuffer(GL_ARRAY_BUFFER, 0)
-    glBindVertexArray(0)
+    glClearColor(0.1, 0.1, 0.1, 1.0)  # Ciemne tło (lepszy kontrast)
 
-    clock = pygame.time.Clock()
+    # Dodatkowe ustawienia dla lepszej obsługi przezroczystości
+    glEnable(GL_ALPHA_TEST)
+    glAlphaFunc(GL_GREATER, 0.1)  # Piksele z alfą mniejszą niż 0.1 będą przezroczyste
+
+def main_loop():
+    init_pygame_opengl()
+
+    # Wczytanie tekstury dla kropli
+    texture_id = load_texture_pygame("raindrop.png")
+
+    # Inicjalizacja kropli deszczu
+    raindrops = [Raindrop() for _ in range(1200)]
+
     running = True
-    mouse_down = False
-    last_pos = None
-
     while running:
-        dt = clock.tick(60) / 1000.0
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 running = False
-            elif event.type == pygame.MOUSEBUTTONDOWN:
-                if event.button == 1:
-                    mouse_down = True
-                    last_pos = pygame.mouse.get_pos()
-                elif event.button == 4:
-                    camera.zoom(-1)
-                elif event.button == 5:
-                    camera.zoom(1)
-            elif event.type == pygame.MOUSEBUTTONUP:
-                if event.button == 1:
-                    mouse_down = False
-            elif event.type == pygame.MOUSEMOTION and mouse_down:
-                x, y = pygame.mouse.get_pos()
-                dx = x - last_pos[0]
-                dy = y - last_pos[1]
-                camera.process_mouse(dx, dy)
-                last_pos = (x, y)
 
-        emitter.update(dt)
-        positions = emitter.get_positions()
-
-        glClearColor(0.42, 0.58, 0.95, 1.0)  # kolor nieba
+        # Czyszczenie ekranu i bufora głębokości
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
+        # Aktywacja tekstury
+        glBindTexture(GL_TEXTURE_2D, texture_id)
+        glColor4f(1.0, 1.0, 1.0, 1.0)  # Biały kolor = pełna jasność tekstury
 
-        # --- Rysowanie tła ---
-        glUseProgram(0)
-        draw_ground()
-
-        # --- Rysowanie deszczu (point sprite) ---
-        glUseProgram(program)
-        loc_view = glGetUniformLocation(program, "view")
-        loc_proj = glGetUniformLocation(program, "projection")
-        glUniformMatrix4fv(loc_view, 1, GL_FALSE, camera.get_view_matrix().astype(np.float32).T)
-        glUniformMatrix4fv(loc_proj, 1, GL_FALSE, camera.get_projection_matrix(width, height).astype(np.float32).T)
-        glActiveTexture(GL_TEXTURE0)
-        glBindTexture(GL_TEXTURE_2D, sprite_tex)
-        glUniform1i(glGetUniformLocation(program, "spriteTex"), 0)
-
-        glBindVertexArray(vao)
-        glBindBuffer(GL_ARRAY_BUFFER, vbo)
-        glBufferData(GL_ARRAY_BUFFER, positions.nbytes, positions, GL_DYNAMIC_DRAW)
-        glDrawArrays(GL_POINTS, 0, len(positions))
-        glBindVertexArray(0)
-        glUseProgram(0)
+        # Aktualizacja i rysowanie każdej kropli
+        for drop in raindrops:
+            drop.update()
+            drop.draw()
 
         pygame.display.flip()
+        pygame.time.wait(10)
 
     pygame.quit()
 
+
+def load_texture_pygame(path):
+    texture_surface = pygame.image.load(path)
+    texture_surface = texture_surface.convert_alpha()  # Upewnij się, że mamy kanał alfa
+    texture_data = pygame.image.tostring(texture_surface, "RGBA")  # True = flip w pionie
+
+    tex_id = glGenTextures(1)
+    glBindTexture(GL_TEXTURE_2D, tex_id)
+    glTexImage2D(
+        GL_TEXTURE_2D, 0, GL_RGBA,
+        texture_surface.get_width(),
+        texture_surface.get_height(),
+        0, GL_RGBA, GL_UNSIGNED_BYTE, texture_data
+    )
+
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR)
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR)
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE)
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE)
+
+    return tex_id
+
 if __name__ == "__main__":
-    main()
+    main_loop()
